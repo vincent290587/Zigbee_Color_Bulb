@@ -49,7 +49,7 @@
 #include "zboss_api.h"
 #include "zboss_api_addons.h"
 #include "zb_mem_config_med.h"
-#include "zb_ha_dimmable_light.h"
+#include "zigbee_color_light.h"
 #include "zb_error_handler.h"
 #include "zb_nrf52_internal.h"
 #include "zigbee_helpers.h"
@@ -72,6 +72,8 @@
 #define BULB_PWM_NAME                     PWM1                                  /**< PWM instance used to drive dimmable light bulb. */
 #define BULB_PWM_TIMER                    2                                     /**< Timer number used by PWM. */
 
+#define ZB_ONGOING_FIND_N_BIND_LED        BSP_BOARD_LED_3           /**< LED to indicate ongoing find and bind procedure. */
+
 /* Basic cluster attributes initial values. */
 #define BULB_INIT_BASIC_APP_VERSION       01                                    /**< Version of the application software (1 byte). */
 #define BULB_INIT_BASIC_STACK_VERSION     10                                    /**< Version of the implementation of the Zigbee stack (1 byte). */
@@ -82,6 +84,11 @@
 #define BULB_INIT_BASIC_POWER_SOURCE      ZB_ZCL_BASIC_POWER_SOURCE_DC_SOURCE   /**< Type of power sources available for the device. For possible values see section 3.2.2.2.8 of ZCL specification. */
 #define BULB_INIT_BASIC_LOCATION_DESC     "Office desk"                         /**< Describes the physical location of the device (16 bytes). May be modified during commisioning process. */
 #define BULB_INIT_BASIC_PH_ENV            ZB_ZCL_BASIC_ENV_UNSPECIFIED          /**< Describes the type of physical environment. For possible values see section 3.2.2.2.10 of ZCL specification. */
+
+#define ENDPOINT_IDENTIFY_TIME            (ZB_TIME_ONE_SECOND * 30) /**< Thingy device identification time. */
+#define HA_COLOR_LIGHT_ENDPOINT_1_ID      10                        /**< Device first endpoint, used to receive light controlling commands. */
+#define HA_COLOR_LIGHT_ENDPOINT_2_ID      11                        /**< Device second endpoint, used to receive light controlling commands. */
+#define HA_COLOR_LIGHT_ENDPOINT_3_ID      12                        /**< Device third endpoint, used to receive light controlling commands. */
 
 #ifdef  BOARD_PCA10059                                                          /**< If it is Dongle */
 #define IDENTIFY_MODE_BSP_EVT             BSP_EVENT_KEY_0                       /**< Button event used to enter the Bulb into the Identify mode. */
@@ -96,24 +103,6 @@
 #define LED_CHAIN_DOUT_PIN                NRF_GPIO_PIN_MAP(1,7)                 /**< GPIO pin used as DOUT (to be connected to DIN pin of the first ws2812 led in chain) */
 #endif
 
-/* Declare endpoint for Dimmable Light device with scenes. */
-#define ZB_HA_DECLARE_LIGHT_EP(ep_name, ep_id, cluster_list)                         \
-  ZB_ZCL_DECLARE_HA_DIMMABLE_LIGHT_SIMPLE_DESC(ep_name, ep_id,                       \
-    ZB_HA_DIMMABLE_LIGHT_IN_CLUSTER_NUM, ZB_HA_DIMMABLE_LIGHT_OUT_CLUSTER_NUM);      \
-  ZBOSS_DEVICE_DECLARE_REPORTING_CTX(reporting_info## device_ctx_name,               \
-                                     ZB_HA_DIMMABLE_LIGHT_REPORT_ATTR_COUNT);        \
-  ZBOSS_DEVICE_DECLARE_LEVEL_CONTROL_CTX(cvc_alarm_info## device_ctx_name,           \
-                                         ZB_HA_DIMMABLE_LIGHT_CVC_ATTR_COUNT);       \
-  ZB_AF_DECLARE_ENDPOINT_DESC(ep_name, ep_id, ZB_AF_HA_PROFILE_ID,                   \
-                              0,     \
-                              NULL,                 \
-                              ZB_ZCL_ARRAY_SIZE(cluster_list, zb_zcl_cluster_desc_t),\
-                              cluster_list,                                          \
-                              (zb_af_simple_desc_1_1_t*)&simple_desc_##ep_name,      \
-                              ZB_HA_DIMMABLE_LIGHT_REPORT_ATTR_COUNT,                \
-                              reporting_info## device_ctx_name,                      \
-                              ZB_HA_DIMMABLE_LIGHT_CVC_ATTR_COUNT,                   \
-                              cvc_alarm_info## device_ctx_name)
 
 #if !defined ZB_ROUTER_ROLE
 #error Define ZB_ROUTER_ROLE to compile light bulb (Router) source code.
@@ -132,58 +121,21 @@ typedef struct
 
 
 APP_PWM_INSTANCE(BULB_PWM_NAME, BULB_PWM_TIMER);
-static bulb_device_ctx_t m_dev_ctx;
 
-ZB_ZCL_DECLARE_IDENTIFY_ATTRIB_LIST(identify_attr_list, &m_dev_ctx.identify_attr.identify_time);
+static zb_color_light_ctx_t m_color_light_ctx_1;
 
+ZB_DECLARE_COLOR_CONTROL_CLUSTER_ATTR_LIST(m_color_light_ctx_1,
+                                           m_color_light_clusters_1);
 
-ZB_ZCL_DECLARE_GROUPS_ATTRIB_LIST(groups_attr_list, &m_dev_ctx.groups_attr.name_support);
+/* Declare two endpoints for color controllable and dimmable light bulbs */
+ZB_ZCL_DECLARE_COLOR_DIMMABLE_LIGHT_EP(m_color_light_ep_1,
+                                       HA_COLOR_LIGHT_ENDPOINT_1_ID,
+                                       m_color_light_clusters_1);
 
-ZB_ZCL_DECLARE_SCENES_ATTRIB_LIST(scenes_attr_list,
-                                  &m_dev_ctx.scenes_attr.scene_count,
-                                  &m_dev_ctx.scenes_attr.current_scene,
-                                  &m_dev_ctx.scenes_attr.current_group,
-                                  &m_dev_ctx.scenes_attr.scene_valid,
-                                  &m_dev_ctx.scenes_attr.name_support);
+/* Declare context for endpoints */
+ZBOSS_DECLARE_DEVICE_CTX_1_EP(m_color_light_ctx,
+                              m_color_light_ep_1);
 
-ZB_ZCL_DECLARE_BASIC_ATTRIB_LIST_EXT(basic_attr_list,
-                                     &m_dev_ctx.basic_attr.zcl_version,
-                                     &m_dev_ctx.basic_attr.app_version,
-                                     &m_dev_ctx.basic_attr.stack_version,
-                                     &m_dev_ctx.basic_attr.hw_version,
-                                     m_dev_ctx.basic_attr.mf_name,
-                                     m_dev_ctx.basic_attr.model_id,
-                                     m_dev_ctx.basic_attr.date_code,
-                                     &m_dev_ctx.basic_attr.power_source,
-                                     m_dev_ctx.basic_attr.location_id,
-                                     &m_dev_ctx.basic_attr.ph_env,
-                                     m_dev_ctx.basic_attr.sw_ver);
-
-/* On/Off cluster attributes additions data */
-ZB_ZCL_DECLARE_ON_OFF_ATTRIB_LIST_EXT(on_off_attr_list,
-                                      &m_dev_ctx.on_off_attr.on_off,
-                                      &m_dev_ctx.on_off_attr.global_scene_ctrl,
-                                      &m_dev_ctx.on_off_attr.on_time,
-                                      &m_dev_ctx.on_off_attr.off_wait_time);
-
-ZB_ZCL_DECLARE_LEVEL_CONTROL_ATTRIB_LIST(level_control_attr_list,
-                                         &m_dev_ctx.level_control_attr.current_level,
-                                         &m_dev_ctx.level_control_attr.remaining_time);
-
-ZB_HA_DECLARE_DIMMABLE_LIGHT_CLUSTER_LIST(dimmable_light_clusters,
-                                          basic_attr_list,
-                                          identify_attr_list,
-                                          groups_attr_list,
-                                          scenes_attr_list,
-                                          on_off_attr_list,
-                                          level_control_attr_list);
-
-ZB_HA_DECLARE_LIGHT_EP(dimmable_light_ep,
-                       HA_DIMMABLE_LIGHT_ENDPOINT,
-                       dimmable_light_clusters);
-
-ZB_HA_DECLARE_DIMMABLE_LIGHT_CTX(dimmable_light_ctx,
-                                 dimmable_light_ep);
 
 #if (APP_BULB_USE_WS2812_LED_CHAIN)
 /**@brief Timer responsible for triggering periodic led chain refresh */
@@ -306,30 +258,108 @@ static void level_control_set_value(zb_uint16_t new_level)
     light_bulb_set_brightness(new_level);
 }
 
-
-/**@brief Function for turning ON/OFF the light bulb.
+/**@brief Function to update LED state on device using given parameters.
  *
- * @param[in]   on   Boolean light bulb state.
+ * @param[IN]  ep            Endpoint ID for which LED state should be updated.
+ * @param[IN]  p_led_params  Pointer to structure containing LED parameters.
  */
-static void on_off_set_value(zb_bool_t on)
+void update_endpoint_led(zb_uint8_t ep, led_params_t * p_led_params)
 {
-    NRF_LOG_INFO("Set ON/OFF value: %i", on);
 
-    ZB_ZCL_SET_ATTRIBUTE(HA_DIMMABLE_LIGHT_ENDPOINT, 
-                         ZB_ZCL_CLUSTER_ID_ON_OFF,    
-                         ZB_ZCL_CLUSTER_SERVER_ROLE,  
-                         ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
-                         (zb_uint8_t *)&on,                        
-                         ZB_FALSE);
+	rgb_led_update(p_led_params);
+	NRF_LOG_INFO("LED value update ");
+}
 
-    if (on)
+/**@brief Function to handle identify notification events on endpoint.
+ *
+ * @param[IN] param Parameter handler is called with.
+ * @param[in] ep    Endpoint ID
+ */
+static zb_void_t zb_identify_ep_handler(zb_uint8_t param, zb_uint16_t ep)
+{
+    zb_ret_t             ret   = RET_OK;
+
+    NRF_LOG_INFO("Endpoint %d, param value: %hd", ep, param);
+
+    if (param)
     {
-        level_control_set_value(m_dev_ctx.level_control_attr.current_level);
+    	/* Turn on led indicating ongoing find and bind procedure and set Thingy
+    	 * LED to breathing green to indicate ongoing procedure. */
+    	bsp_board_led_on(ZB_ONGOING_FIND_N_BIND_LED);
+    	ret = zb_color_light_do_identify_effect(&m_color_light_ctx_1,
+    			ZB_ZCL_IDENTIFY_EFFECT_ID_BREATHE);
     }
     else
     {
-        light_bulb_set_brightness(0U);
+    	/* Turn off led indicating ongoing find and bind procedure and
+    	 * restore Thingy LED color. */
+    	bsp_board_led_off(ZB_ONGOING_FIND_N_BIND_LED);
+    	ret = zb_color_light_do_identify_effect(&m_color_light_ctx_1,
+    			ZB_ZCL_IDENTIFY_EFFECT_ID_STOP);
     }
+
+    UNUSED_RETURN_VALUE(ret);
+}
+
+
+/**@brief Function to handle identify notification events on the first endpoint.
+ *
+ * @param[IN]   param   Parameter handler is called with.
+ */
+static zb_void_t zb_identify_ep_1_handler(zb_uint8_t param)
+{
+    zb_identify_ep_handler(param, HA_COLOR_LIGHT_ENDPOINT_1_ID);
+}
+
+
+
+/**@brief Callback function for handling ZCL commands.
+ *
+ * @param[IN]   bufid   Reference to Zigbee stack buffer used to pass received data.
+ */
+static zb_void_t zb_zcl_device_cb(zb_bufid_t bufid)
+{
+    zb_zcl_device_callback_param_t * p_device_cb_param = ZB_BUF_GET_PARAM(bufid, zb_zcl_device_callback_param_t);
+    zb_ret_t                         ret = RET_OK;
+
+    NRF_LOG_INFO("Received ZCL callback %hd on endpoint %hu",
+                 p_device_cb_param->device_cb_id, p_device_cb_param->endpoint);
+
+    /* Prevent led update if related Endpoint is in identify mode. */
+    if (!m_color_light_ctx_1.identify_attr.identify_time)
+    {
+        switch (p_device_cb_param->device_cb_id)
+        {
+            case ZB_ZCL_LEVEL_CONTROL_SET_VALUE_CB_ID:
+                ret = zb_color_light_set_level(&m_color_light_ctx_1,
+                                               p_device_cb_param->cb_param.level_control_set_value_param.new_value);
+                break;
+
+            case ZB_ZCL_SET_ATTR_VALUE_CB_ID:
+                ret = zb_color_light_set_attribute(&m_color_light_ctx_1,
+                                                   &p_device_cb_param->cb_param.set_attr_value_param);
+                break;
+
+            case ZB_ZCL_IDENTIFY_EFFECT_CB_ID:
+                ret = zb_color_light_do_identify_effect(&m_color_light_ctx_1,
+                                                        p_device_cb_param->cb_param.identify_effect_value_param.effect_id);
+                break;
+
+            default:
+                ret = RET_ERROR;
+                NRF_LOG_INFO("Default case, returned error");
+                break;
+        }
+    }
+    else
+    {
+        NRF_LOG_INFO("Can't update LED, endpoint in identify mode");
+        ret = RET_ERROR;
+    }
+
+    /* Set default response value. */
+    p_device_cb_param->status = ret;
+    NRF_LOG_INFO("zb_zcl_device_cb status: %hd", p_device_cb_param->status);
 }
 
 /**@brief Callback for button events.
@@ -344,7 +374,7 @@ static void buttons_handler(bsp_event_t evt)
     {
         case IDENTIFY_MODE_BSP_EVT:
             /* Check if endpoint is in identifying mode, if not put desired endpoint in identifying mode. */
-            if (m_dev_ctx.identify_attr.identify_time == ZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE)
+            if (m_color_light_ctx_1.identify_attr.identify_time == ZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE)
             {
                 NRF_LOG_INFO("Bulb put in identifying mode");
                 zb_err_code = zb_bdb_finding_binding_target(HA_DIMMABLE_LIGHT_ENDPOINT);
@@ -376,15 +406,6 @@ static void leds_buttons_init(void)
     APP_ERROR_CHECK(err_code);
     /* By default the bsp_init attaches BSP_KEY_EVENTS_{0-4} to the PUSH events of the corresponding buttons. */
 
-    /* Initialize PWM running on timer 1 in order to control dimmable light bulb. */
-    err_code = app_pwm_init(&BULB_PWM_NAME, &pwm_cfg, NULL);
-    APP_ERROR_CHECK(err_code);
-
-    app_pwm_enable(&BULB_PWM_NAME);
-
-    while (app_pwm_channel_duty_set(&BULB_PWM_NAME, 0, 99) == NRF_ERROR_BUSY)
-    {
-    }
 }
 
 /**@brief Function for initializing all clusters attributes.
@@ -392,10 +413,10 @@ static void leds_buttons_init(void)
 static void bulb_clusters_attr_init(void)
 {
     /* Basic cluster attributes data */
-    m_dev_ctx.basic_attr.zcl_version   = ZB_ZCL_VERSION;
-    m_dev_ctx.basic_attr.app_version   = BULB_INIT_BASIC_APP_VERSION;
-    m_dev_ctx.basic_attr.stack_version = BULB_INIT_BASIC_STACK_VERSION;
-    m_dev_ctx.basic_attr.hw_version    = BULB_INIT_BASIC_HW_VERSION;
+	m_color_light_ctx_1.basic_attr.zcl_version   = ZB_ZCL_VERSION;
+    m_color_light_ctx_1.basic_attr.app_version   = BULB_INIT_BASIC_APP_VERSION;
+    m_color_light_ctx_1.basic_attr.stack_version = BULB_INIT_BASIC_STACK_VERSION;
+    m_color_light_ctx_1.basic_attr.hw_version    = BULB_INIT_BASIC_HW_VERSION;
 
     /* Use ZB_ZCL_SET_STRING_VAL to set strings, because the first byte should
      * contain string length without trailing zero.
@@ -403,48 +424,48 @@ static void bulb_clusters_attr_init(void)
      * For example "test" string wil be encoded as:
      *   [(0x4), 't', 'e', 's', 't']
      */
-    ZB_ZCL_SET_STRING_VAL(m_dev_ctx.basic_attr.mf_name,
+    ZB_ZCL_SET_STRING_VAL(m_color_light_ctx_1.basic_attr.mf_name,
                           BULB_INIT_BASIC_MANUF_NAME,
                           ZB_ZCL_STRING_CONST_SIZE(BULB_INIT_BASIC_MANUF_NAME));
 
-    ZB_ZCL_SET_STRING_VAL(m_dev_ctx.basic_attr.model_id,
+    ZB_ZCL_SET_STRING_VAL(m_color_light_ctx_1.basic_attr.model_id,
                           BULB_INIT_BASIC_MODEL_ID,
                           ZB_ZCL_STRING_CONST_SIZE(BULB_INIT_BASIC_MODEL_ID));
 
-    ZB_ZCL_SET_STRING_VAL(m_dev_ctx.basic_attr.date_code,
+    ZB_ZCL_SET_STRING_VAL(m_color_light_ctx_1.basic_attr.date_code,
                           BULB_INIT_BASIC_DATE_CODE,
                           ZB_ZCL_STRING_CONST_SIZE(BULB_INIT_BASIC_DATE_CODE));
 
-    m_dev_ctx.basic_attr.power_source = BULB_INIT_BASIC_POWER_SOURCE;
+    m_color_light_ctx_1.basic_attr.power_source = BULB_INIT_BASIC_POWER_SOURCE;
 
-    ZB_ZCL_SET_STRING_VAL(m_dev_ctx.basic_attr.location_id,
+    ZB_ZCL_SET_STRING_VAL(m_color_light_ctx_1.basic_attr.location_id,
                           BULB_INIT_BASIC_LOCATION_DESC,
                           ZB_ZCL_STRING_CONST_SIZE(BULB_INIT_BASIC_LOCATION_DESC));
 
 
-    m_dev_ctx.basic_attr.ph_env = BULB_INIT_BASIC_PH_ENV;
+    m_color_light_ctx_1.basic_attr.ph_env = BULB_INIT_BASIC_PH_ENV;
 
     /* Identify cluster attributes data */
-    m_dev_ctx.identify_attr.identify_time = ZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE;
+    m_color_light_ctx_1.identify_attr.identify_time = ZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE;
 
     /* On/Off cluster attributes data */
-    m_dev_ctx.on_off_attr.on_off = (zb_bool_t)ZB_ZCL_ON_OFF_IS_ON;
+    m_color_light_ctx_1.on_off_attr.on_off = (zb_bool_t)ZB_ZCL_ON_OFF_IS_ON;
 
-    m_dev_ctx.level_control_attr.current_level  = ZB_ZCL_LEVEL_CONTROL_LEVEL_MAX_VALUE;
-    m_dev_ctx.level_control_attr.remaining_time = ZB_ZCL_LEVEL_CONTROL_REMAINING_TIME_DEFAULT_VALUE;
+    m_color_light_ctx_1.level_control_attr.current_level  = ZB_ZCL_LEVEL_CONTROL_LEVEL_MAX_VALUE;
+    m_color_light_ctx_1.level_control_attr.remaining_time = ZB_ZCL_LEVEL_CONTROL_REMAINING_TIME_DEFAULT_VALUE;
 
     ZB_ZCL_SET_ATTRIBUTE(HA_DIMMABLE_LIGHT_ENDPOINT, 
                          ZB_ZCL_CLUSTER_ID_ON_OFF,    
                          ZB_ZCL_CLUSTER_SERVER_ROLE,  
                          ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
-                         (zb_uint8_t *)&m_dev_ctx.on_off_attr.on_off,                        
+                         (zb_uint8_t *)&m_color_light_ctx_1.on_off_attr.on_off,
                          ZB_FALSE);                   
 
     ZB_ZCL_SET_ATTRIBUTE(HA_DIMMABLE_LIGHT_ENDPOINT,                                       
                          ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL,            
                          ZB_ZCL_CLUSTER_SERVER_ROLE,                 
                          ZB_ZCL_ATTR_LEVEL_CONTROL_CURRENT_LEVEL_ID, 
-                         (zb_uint8_t *)&m_dev_ctx.level_control_attr.current_level,                                       
+                         (zb_uint8_t *)&m_color_light_ctx_1.level_control_attr.current_level,
                          ZB_FALSE);                                  
 }
 
@@ -457,67 +478,6 @@ zb_void_t zb_osif_go_idle(zb_void_t)
 {
     //TODO: implement your own logic if needed
     zb_osif_wait_for_event();
-}
-
-/**@brief Callback function for handling ZCL commands.
- *
- * @param[in]   bufid   Reference to Zigbee stack buffer used to pass received data.
- */
-static zb_void_t zcl_device_cb(zb_bufid_t bufid)
-{
-    zb_uint8_t                       cluster_id;
-    zb_uint8_t                       attr_id;
-    zb_zcl_device_callback_param_t * p_device_cb_param = ZB_BUF_GET_PARAM(bufid, zb_zcl_device_callback_param_t);
-
-    NRF_LOG_INFO("zcl_device_cb id %hd", p_device_cb_param->device_cb_id);
-
-    /* Set default response value. */
-    p_device_cb_param->status = RET_OK;
-
-    switch (p_device_cb_param->device_cb_id)
-    {
-        case ZB_ZCL_LEVEL_CONTROL_SET_VALUE_CB_ID:
-            NRF_LOG_INFO("Level control setting to %d", p_device_cb_param->cb_param.level_control_set_value_param.new_value);
-            level_control_set_value(p_device_cb_param->cb_param.level_control_set_value_param.new_value);
-            break;
-
-        case ZB_ZCL_SET_ATTR_VALUE_CB_ID:
-            cluster_id = p_device_cb_param->cb_param.set_attr_value_param.cluster_id;
-            attr_id    = p_device_cb_param->cb_param.set_attr_value_param.attr_id;
-
-            if (cluster_id == ZB_ZCL_CLUSTER_ID_ON_OFF)
-            {
-                uint8_t value = p_device_cb_param->cb_param.set_attr_value_param.values.data8;
-
-                NRF_LOG_INFO("on/off attribute setting to %hd", value);
-                if (attr_id == ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID)
-                {
-                    on_off_set_value((zb_bool_t) value);
-                }
-            }
-            else if (cluster_id == ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL)
-            {
-                uint16_t value = p_device_cb_param->cb_param.set_attr_value_param.values.data16;
-
-                NRF_LOG_INFO("level control attribute setting to %hd", value);
-                if (attr_id == ZB_ZCL_ATTR_LEVEL_CONTROL_CURRENT_LEVEL_ID)
-                {
-                    level_control_set_value(value);
-                }
-            }
-            else
-            {
-                /* Other clusters can be processed here */
-                NRF_LOG_INFO("Unhandled cluster attribute id: %d", cluster_id);
-            }
-            break;
-
-        default:
-            p_device_cb_param->status = RET_ERROR;
-            break;
-    }
-
-    NRF_LOG_INFO("zcl_device_cb status: %hd", p_device_cb_param->status);
 }
 
 /**@brief Zigbee stack event handler.
@@ -578,16 +538,21 @@ int main(void)
     zb_set_keepalive_timeout(ZB_MILLISECONDS_TO_BEACON_INTERVAL(3000));
 
     /* Initialize application context structure. */
-    UNUSED_RETURN_VALUE(ZB_MEMSET(&m_dev_ctx, 0, sizeof(m_dev_ctx)));
+    UNUSED_RETURN_VALUE(ZB_MEMSET(&m_color_light_ctx_1, 0, sizeof(m_color_light_ctx_1)));
 
-    /* Register callback for handling ZCL commands. */
-    ZB_ZCL_REGISTER_DEVICE_CB(zcl_device_cb);
+    // Register device context with ZBOSS prior to using zb_color_light
+    // functions as the module uses ZBOSS APIs which operate on the device object.
+    ZB_AF_REGISTER_DEVICE_CTX(&m_color_light_ctx);
+    ZB_ZCL_REGISTER_DEVICE_CB(zb_zcl_device_cb);
 
-    /* Register dimmer switch device context (endpoints). */
-    ZB_AF_REGISTER_DEVICE_CTX(&dimmable_light_ctx);
+    zb_color_light_init();
+
+    zb_color_light_init_ctx(&m_color_light_ctx_1,
+                            HA_COLOR_LIGHT_ENDPOINT_1_ID,
+                            zb_identify_ep_1_handler);
 
     bulb_clusters_attr_init();
-    level_control_set_value(m_dev_ctx.level_control_attr.current_level);
+    level_control_set_value(m_color_light_ctx_1.level_control_attr.current_level);
 
 #if (APP_BULB_USE_WS2812_LED_CHAIN)
     /* Let's have a timer triggering refresh of led state */
