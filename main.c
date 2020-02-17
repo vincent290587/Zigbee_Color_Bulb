@@ -69,8 +69,6 @@
 #define IEEE_CHANNEL_MASK                 (1l << ZIGBEE_CHANNEL)                /**< Scan only one, predefined channel to find the coordinator. */
 #define HA_DIMMABLE_LIGHT_ENDPOINT        10                                    /**< Device endpoint, used to receive light controlling commands. */
 #define ERASE_PERSISTENT_CONFIG           ZB_FALSE                              /**< Do not erase NVRAM to save the network parameters after device reboot or power-off. */
-#define BULB_PWM_NAME                     PWM1                                  /**< PWM instance used to drive dimmable light bulb. */
-#define BULB_PWM_TIMER                    2                                     /**< Timer number used by PWM. */
 
 #define ZB_ONGOING_FIND_N_BIND_LED        BSP_BOARD_LED_3           /**< LED to indicate ongoing find and bind procedure. */
 
@@ -120,8 +118,6 @@ typedef struct
 } bulb_device_ctx_t;
 
 
-APP_PWM_INSTANCE(BULB_PWM_NAME, BULB_PWM_TIMER);
-
 static zb_color_light_ctx_t m_color_light_ctx_1;
 
 ZB_DECLARE_COLOR_CONTROL_CLUSTER_ATTR_LIST(m_color_light_ctx_1,
@@ -136,14 +132,6 @@ ZB_ZCL_DECLARE_COLOR_DIMMABLE_LIGHT_EP(m_color_light_ep_1,
 ZBOSS_DECLARE_DEVICE_CTX_1_EP(m_color_light_ctx,
                               m_color_light_ep_1);
 
-
-#if (APP_BULB_USE_WS2812_LED_CHAIN)
-/**@brief Timer responsible for triggering periodic led chain refresh */
-APP_TIMER_DEF(m_ws2812_refresh_timer);
-
-/** @brief Requests a led chain refresh */
-static volatile bool m_ws2812_refresh_request;
-#endif
 
 /**@brief Function for initializing the application timer.
  */
@@ -161,101 +149,6 @@ static void log_init(void)
     APP_ERROR_CHECK(err_code);
 
     NRF_LOG_DEFAULT_BACKENDS_INIT();
-}
-
-/**@brief Sets brightness of on-board LED
- *
- * @param[in] brightness_level Brightness level, allowed values 0 ... 255, 0 - turn off, 255 - full brightness
- */
-static void light_bulb_onboard_set_brightness(zb_uint8_t brightness_level)
-{
-    app_pwm_duty_t app_pwm_duty;
-
-    /* Scale level value: APP_PWM uses 0-100 scale, but Zigbee level control cluster uses values from 0 up to 255. */
-    app_pwm_duty = (brightness_level * 100U) / 255U;
-
-    /* Set the duty cycle - keep trying until PWM is ready. */
-    while (app_pwm_channel_duty_set(&BULB_PWM_NAME, 0, app_pwm_duty) == NRF_ERROR_BUSY)
-    {
-    }
-}
-
-#if (APP_BULB_USE_WS2812_LED_CHAIN)
-/**@brief Sets brightness of ws2812 led chain
- *
- * @param[in] brightness_level Brightness level, allowed values 0 ... 255, 0 - turn off, 255 - full brightness
- */
-static void light_bulb_ws2812_chain_set_brightness(zb_uint8_t brightness_level)
-{
-    uint32_t color;
-
-    /* Decrease brightness just to save your eyes. LEDs can be very bright */
-    if (brightness_level >= 2U)
-    {
-        brightness_level /= 2U;
-    }
-
-    color = ((uint32_t)brightness_level << 16);  /* Red component   */
-    color |= ((uint32_t)brightness_level << 8);  /* Green component */
-    color |= (uint32_t)brightness_level;         /* Blue component  */
-
-    drv_ws2812_set_pixel_all(color);
-
-    /* Main loop will take care of refreshing led chain */
-    m_ws2812_refresh_request = true;
-}
-#endif
-
-/**@brief Sets brightness of bulb luminous executive element
- *
- * @param[in] brightness_level Brightness level, allowed values 0 ... 255, 0 - turn off, 255 - full brightness
- */
-static void light_bulb_set_brightness(zb_uint8_t brightness_level)
-{
-    light_bulb_onboard_set_brightness(brightness_level);
-#if (APP_BULB_USE_WS2812_LED_CHAIN)
-    light_bulb_ws2812_chain_set_brightness(brightness_level);
-#endif
-}
-
-/**@brief Function for setting the light bulb brightness.
-  *
-  * @param[in]   new_level   Light bulb brightness value.
- */
-static void level_control_set_value(zb_uint16_t new_level)
-{
-    NRF_LOG_INFO("Set level value: %i", new_level);
-
-    ZB_ZCL_SET_ATTRIBUTE(HA_DIMMABLE_LIGHT_ENDPOINT,                                       
-                         ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL,            
-                         ZB_ZCL_CLUSTER_SERVER_ROLE,                 
-                         ZB_ZCL_ATTR_LEVEL_CONTROL_CURRENT_LEVEL_ID, 
-                         (zb_uint8_t *)&new_level,                                       
-                         ZB_FALSE);                                  
-
-    /* According to the table 7.3 of Home Automation Profile Specification v 1.2 rev 29, chapter 7.1.3. */
-    if (new_level == 0)
-    {
-        zb_uint8_t value = ZB_FALSE;
-        ZB_ZCL_SET_ATTRIBUTE(HA_DIMMABLE_LIGHT_ENDPOINT, 
-                             ZB_ZCL_CLUSTER_ID_ON_OFF,    
-                             ZB_ZCL_CLUSTER_SERVER_ROLE,  
-                             ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
-                             &value,                        
-                             ZB_FALSE);                   
-    }
-    else
-    {
-        zb_uint8_t value = ZB_TRUE;
-        ZB_ZCL_SET_ATTRIBUTE(HA_DIMMABLE_LIGHT_ENDPOINT, 
-                             ZB_ZCL_CLUSTER_ID_ON_OFF,    
-                             ZB_ZCL_CLUSTER_SERVER_ROLE,  
-                             ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
-                             &value,                        
-                             ZB_FALSE);
-    }
-
-    light_bulb_set_brightness(new_level);
 }
 
 /**@brief Function to update LED state on device using given parameters.
@@ -399,74 +292,12 @@ static void buttons_handler(bsp_event_t evt)
 static void leds_buttons_init(void)
 {
     ret_code_t       err_code;
-    app_pwm_config_t pwm_cfg = APP_PWM_DEFAULT_CONFIG_1CH(5000L, bsp_board_led_idx_to_pin(BULB_LED));
 
     /* Initialize all LEDs and buttons. */
     err_code = bsp_init(BSP_INIT_LEDS | BSP_INIT_BUTTONS, buttons_handler);
     APP_ERROR_CHECK(err_code);
     /* By default the bsp_init attaches BSP_KEY_EVENTS_{0-4} to the PUSH events of the corresponding buttons. */
 
-}
-
-/**@brief Function for initializing all clusters attributes.
- */
-static void bulb_clusters_attr_init(void)
-{
-    /* Basic cluster attributes data */
-	m_color_light_ctx_1.basic_attr.zcl_version   = ZB_ZCL_VERSION;
-    m_color_light_ctx_1.basic_attr.app_version   = BULB_INIT_BASIC_APP_VERSION;
-    m_color_light_ctx_1.basic_attr.stack_version = BULB_INIT_BASIC_STACK_VERSION;
-    m_color_light_ctx_1.basic_attr.hw_version    = BULB_INIT_BASIC_HW_VERSION;
-
-    /* Use ZB_ZCL_SET_STRING_VAL to set strings, because the first byte should
-     * contain string length without trailing zero.
-     *
-     * For example "test" string wil be encoded as:
-     *   [(0x4), 't', 'e', 's', 't']
-     */
-    ZB_ZCL_SET_STRING_VAL(m_color_light_ctx_1.basic_attr.mf_name,
-                          BULB_INIT_BASIC_MANUF_NAME,
-                          ZB_ZCL_STRING_CONST_SIZE(BULB_INIT_BASIC_MANUF_NAME));
-
-    ZB_ZCL_SET_STRING_VAL(m_color_light_ctx_1.basic_attr.model_id,
-                          BULB_INIT_BASIC_MODEL_ID,
-                          ZB_ZCL_STRING_CONST_SIZE(BULB_INIT_BASIC_MODEL_ID));
-
-    ZB_ZCL_SET_STRING_VAL(m_color_light_ctx_1.basic_attr.date_code,
-                          BULB_INIT_BASIC_DATE_CODE,
-                          ZB_ZCL_STRING_CONST_SIZE(BULB_INIT_BASIC_DATE_CODE));
-
-    m_color_light_ctx_1.basic_attr.power_source = BULB_INIT_BASIC_POWER_SOURCE;
-
-    ZB_ZCL_SET_STRING_VAL(m_color_light_ctx_1.basic_attr.location_id,
-                          BULB_INIT_BASIC_LOCATION_DESC,
-                          ZB_ZCL_STRING_CONST_SIZE(BULB_INIT_BASIC_LOCATION_DESC));
-
-
-    m_color_light_ctx_1.basic_attr.ph_env = BULB_INIT_BASIC_PH_ENV;
-
-    /* Identify cluster attributes data */
-    m_color_light_ctx_1.identify_attr.identify_time = ZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE;
-
-    /* On/Off cluster attributes data */
-    m_color_light_ctx_1.on_off_attr.on_off = (zb_bool_t)ZB_ZCL_ON_OFF_IS_ON;
-
-    m_color_light_ctx_1.level_control_attr.current_level  = ZB_ZCL_LEVEL_CONTROL_LEVEL_MAX_VALUE;
-    m_color_light_ctx_1.level_control_attr.remaining_time = ZB_ZCL_LEVEL_CONTROL_REMAINING_TIME_DEFAULT_VALUE;
-
-    ZB_ZCL_SET_ATTRIBUTE(HA_DIMMABLE_LIGHT_ENDPOINT, 
-                         ZB_ZCL_CLUSTER_ID_ON_OFF,    
-                         ZB_ZCL_CLUSTER_SERVER_ROLE,  
-                         ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
-                         (zb_uint8_t *)&m_color_light_ctx_1.on_off_attr.on_off,
-                         ZB_FALSE);                   
-
-    ZB_ZCL_SET_ATTRIBUTE(HA_DIMMABLE_LIGHT_ENDPOINT,                                       
-                         ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL,            
-                         ZB_ZCL_CLUSTER_SERVER_ROLE,                 
-                         ZB_ZCL_ATTR_LEVEL_CONTROL_CURRENT_LEVEL_ID, 
-                         (zb_uint8_t *)&m_color_light_ctx_1.level_control_attr.current_level,
-                         ZB_FALSE);                                  
 }
 
 /**@brief Function which tries to sleep down the MCU 
@@ -494,12 +325,6 @@ void zboss_signal_handler(zb_bufid_t bufid)
     zb_buf_free(bufid);
 }
 
-#if (APP_BULB_USE_WS2812_LED_CHAIN)
-static void ws2812_refresh_timer_timeout_handler(void *p_context)
-{
-    m_ws2812_refresh_request = true;
-}
-#endif
 
 /**@brief Function for application main entry.
  */
@@ -512,12 +337,6 @@ int main(void)
     timer_init();
     log_init();
     leds_buttons_init();
-
-#if (APP_BULB_USE_WS2812_LED_CHAIN)
-    ret_code_t ret_code;
-    ret_code = drv_ws2812_init(LED_CHAIN_DOUT_PIN);
-    APP_ERROR_CHECK(ret_code);
-#endif
 
     /* Set Zigbee stack logging level and traffic dump subsystem. */
     ZB_SET_TRACE_LEVEL(ZIGBEE_TRACE_LEVEL);
@@ -551,18 +370,6 @@ int main(void)
                             HA_COLOR_LIGHT_ENDPOINT_1_ID,
                             zb_identify_ep_1_handler);
 
-    bulb_clusters_attr_init();
-    level_control_set_value(m_color_light_ctx_1.level_control_attr.current_level);
-
-#if (APP_BULB_USE_WS2812_LED_CHAIN)
-    /* Let's have a timer triggering refresh of led state */
-    ret_code = app_timer_create(&m_ws2812_refresh_timer, APP_TIMER_MODE_REPEATED,
-            ws2812_refresh_timer_timeout_handler);
-    APP_ERROR_CHECK(ret_code);
-    ret_code = app_timer_start(m_ws2812_refresh_timer, APP_TIMER_TICKS(5000U), NULL);
-    APP_ERROR_CHECK(ret_code);
-#endif
-
     /** Start Zigbee Stack. */
     zb_err_code = zboss_start_no_autostart();
     ZB_ERROR_CHECK(zb_err_code);
@@ -572,15 +379,6 @@ int main(void)
         zboss_main_loop_iteration();
         UNUSED_RETURN_VALUE(NRF_LOG_PROCESS());
 
-#if (APP_BULB_USE_WS2812_LED_CHAIN)
-        if (m_ws2812_refresh_request)
-        {
-            if (drv_ws2812_display(NULL, NULL) == NRF_SUCCESS)
-            {
-                m_ws2812_refresh_request = false;
-            }
-        }
-#endif
     }
 }
 
