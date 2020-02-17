@@ -74,7 +74,7 @@ SRC_FILES += \
   $(PROJ_DIR)/main.c \
   $(PROJ_DIR)/zigbee_color_light.c \
   $(PROJ_DIR)/rgb_led.c \
-  $(PROJ_DIR)/rgb_led_backend_ws2812.c \
+  $(PROJ_DIR)/rgb_led_backend_pwm.c \
   $(PROJ_DIR)/main.c \
   $(SDK_ROOT)/modules/nrfx/mdk/system_nrf52840.c \
   $(SDK_ROOT)/components/zigbee/common/zigbee_helpers.c \

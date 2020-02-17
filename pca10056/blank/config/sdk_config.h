@@ -50,10 +50,11 @@
 #include "sdk_config_rtt.h"
 // <h> Application 
 
-//==========================================================
-// <o> APP_BULB_USE_WS2812_LED_CHAIN - Configures the application to use the WS2812 LED chain as bulb (for example, the Adafruit NeoPixel Shield (for Arduino)). 
-#ifndef APP_BULB_USE_WS2812_LED_CHAIN
-#define APP_BULB_USE_WS2812_LED_CHAIN 1
+
+
+// <s> RGB_LED_BACKEND_PWM_INSTANCE - rgb_led_backend - Available RGB LED strip backend implementations
+#ifndef RGB_LED_BACKEND_PWM_INSTANCE
+#define RGB_LED_BACKEND_PWM_INSTANCE NRF_DRV_PWM_INSTANCE(0)
 #endif
 
 // </h> 
