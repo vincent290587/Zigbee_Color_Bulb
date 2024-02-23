@@ -1,0 +1,9 @@
+//
+// Created by vgol on 02/03/2023.
+//
+
+#cmakedefine GIT_DESCRIBE_INSTALL "@GIT_DESCRIBE_INSTALL@"
+
+#cmakedefine CMAKE_BUILD_TYPE "@CMAKE_BUILD_TYPE@"
+
+#cmakedefine CMAKE_PROJECT_VERSION "@CMAKE_PROJECT_VERSION@"
