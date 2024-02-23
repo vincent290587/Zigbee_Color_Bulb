@@ -2,7 +2,7 @@ set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_VERSION 1)
 cmake_minimum_required(VERSION 3.23.2)
 
-project(ZLight VERSION 0.0.2 LANGUAGES ASM C CXX)
+project(ZLight VERSION 0.0.1 LANGUAGES ASM C CXX)
 
 # -DCMAKE_TOOLCHAIN_FILE=toolchain-arm-none-eabi.cmake
 
@@ -27,9 +27,6 @@ set(CMAKE_COLOR_MAKEFILE          OFF)
 set(SDK_ROOT    "c:/Nordic/nrf5_sdk_for_thread_and_zigbee_v4.2.0_af27f76" CACHE FILEPATH "Nordic SDK path")
 
 set(CHIP_ID     "nRF52840")
-add_definitions(-DNRF52840_XXAA)
-add_definitions(-DBOARD_PCA10056)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/pca10056/blank/config)
 
 #add_definitions(-DPIN_WAT=15)
 #add_definitions(-DLIS_INT1=28)
@@ -66,7 +63,7 @@ add_custom_target(erase
 
 ###
 
-#add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/pca10056/blank/config)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/pca10056/blank/config)
 
 add_subdirectory(sdk)
 

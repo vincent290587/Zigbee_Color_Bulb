@@ -101,6 +101,7 @@ set(SDK_INCLUDES
         ${SDK_ROOT}/components/libraries/usbd
         ${SDK_ROOT}/components/libraries/usbd/class/cdc/acm
         ${SDK_ROOT}/components/libraries/util
+        ${SDK_ROOT}/components/libraries/pwm
 
         ${SDK_ROOT}/components/softdevice/common
 
@@ -109,10 +110,16 @@ set(SDK_INCLUDES
 
         ${SDK_ROOT}/components/zigbee/common
 
-        ${SDK_ROOT}/external/zboss/include
+        ${SDK_ROOT}/external/zboss/include/zcl
         ${SDK_ROOT}/external/zboss/osif
+        ${SDK_ROOT}/external/zboss/include
+        ${SDK_ROOT}/external/zboss/src/include
+        ${SDK_ROOT}/external/zboss/src/zb_error
+        ${SDK_ROOT}/external/zboss/include/ha
         ${SDK_ROOT}/external/zboss/include/osif
-        ${SDK_ROOT}/external/zboss/addons
+        ${SDK_ROOT}/external/zboss/include/addons
+
+#        ${SDK_ROOT}/external/zboss/addons
 
         ${SDK_ROOT}/external/nRF-IEEE-802.15.4-radio-driver/src
         ${SDK_ROOT}/external/nRF-IEEE-802.15.4-radio-driver/src/fem
@@ -274,6 +281,7 @@ set(SDK_SRCS
 #        ${SDK_ROOT}/components/libraries/experimental_task_manager/task_manager_core_armgcc.S
         ${SDK_ROOT}/components/libraries/fds/fds.c
         ${SDK_ROOT}/components/libraries/fstorage/nrf_fstorage.c
+        ${SDK_ROOT}/components/libraries/fstorage/nrf_fstorage_nvmc.c
         ${SDK_ROOT}/components/libraries/hardfault/nrf52/handler/hardfault_handler_gcc.c
         ${SDK_ROOT}/components/libraries/log/src/nrf_log_backend_rtt.c
         ${SDK_ROOT}/components/libraries/log/src/nrf_log_backend_serial.c
@@ -293,9 +301,7 @@ set(SDK_SRCS
         ${SDK_ROOT}/components/libraries/util/app_error_weak.c
         ${SDK_ROOT}/components/libraries/util/app_util_platform.c
         ${SDK_ROOT}/components/libraries/util/nrf_assert.c
-
-        ${SDK_ROOT}/components/zigbee/common/zigbee_helpers.c
-        ${SDK_ROOT}/components/zigbee/common/zigbee_logger_eprxzcl.c
+        ${SDK_ROOT}/components/libraries/pwm/app_pwm.c
 
         ${SDK_ROOT}/external/fatfs/port/diskio_blkdev.c
         ${SDK_ROOT}/external/fatfs/src/ff.c
@@ -306,9 +312,12 @@ set(SDK_SRCS
         ${SDK_ROOT}/integration/nrfx/legacy/nrf_drv_clock.c
         ${SDK_ROOT}/integration/nrfx/legacy/nrf_drv_power.c
         ${SDK_ROOT}/integration/nrfx/legacy/nrf_drv_ppi.c
-        ${SDK_ROOT}/integration/nrfx/legacy/nrf_drv_spi.c
+#        ${SDK_ROOT}/integration/nrfx/legacy/nrf_drv_spi.c
         ${SDK_ROOT}/integration/nrfx/legacy/nrf_drv_twi.c
         ${SDK_ROOT}/integration/nrfx/legacy/nrf_drv_uart.c
+        ${SDK_ROOT}/integration/nrfx/legacy/nrf_drv_rng.c
+
+        ${SDK_ROOT}/modules/nrfx/hal/nrf_ecb.c
 
         ${SDK_ROOT}/modules/nrfx/drivers/src/nrfx_clock.c
         ${SDK_ROOT}/modules/nrfx/drivers/src/nrfx_clock.c
@@ -321,6 +330,7 @@ set(SDK_SRCS
         ${SDK_ROOT}/modules/nrfx/drivers/src/nrfx_systick.c
         ${SDK_ROOT}/modules/nrfx/drivers/src/nrfx_timer.c
         ${SDK_ROOT}/modules/nrfx/drivers/src/nrfx_twi.c
+        ${SDK_ROOT}/modules/nrfx/drivers/src/nrfx_rng.c
         ${SDK_ROOT}/modules/nrfx/drivers/src/nrfx_twim.c
         ${SDK_ROOT}/modules/nrfx/drivers/src/nrfx_uart.c
         ${SDK_ROOT}/modules/nrfx/drivers/src/nrfx_uarte.c
@@ -395,8 +405,6 @@ set(SDK_SRCS
         ${SDK_ROOT}/external/zboss/src/commissioning/bdb/zdo_commissioning_bdb_formation.c
         ${SDK_ROOT}/external/zboss/src/commissioning/legacy/zdo_commissioning_classic.c
 
-        ${SDK_ROOT}/external/zboss/src/zb_error/zb_error_to_string.c
-
         ${SDK_ROOT}/external/zboss/osif/zb_nrf52_common.c
         ${SDK_ROOT}/external/zboss/osif/zb_nrf52_logger.c
         ${SDK_ROOT}/external/zboss/osif/zb_nrf52_nrf_logger.c
@@ -404,13 +412,16 @@ set(SDK_SRCS
         ${SDK_ROOT}/external/zboss/osif/zb_nrf52_timer.c
         ${SDK_ROOT}/external/zboss/osif/zb_nrf52_transceiver.c
 
+        ${SDK_ROOT}/components/zigbee/common/zigbee_helpers.c
+        ${SDK_ROOT}/components/zigbee/common/zigbee_logger_eprxzcl.c
+
         ${SDK_ROOT}/modules/nrfx/mdk/gcc_startup_${CHIP_ID}.S
         ${SDK_ROOT}/modules/nrfx/mdk/system_${CHIP_ID}.c
 
-#        ${SDK_ROOT}/components/libraries/util/app_error_handler_gcc.c
-#        ${SDK_ROOT}/external/segger_rtt/SEGGER_RTT.c
-#        ${SDK_ROOT}/external/segger_rtt/SEGGER_RTT_Syscalls_GCC.c
-#        ${SDK_ROOT}/external/segger_rtt/SEGGER_RTT_printf.c
+        ${SDK_ROOT}/components/libraries/util/app_error_handler_gcc.c
+        ${SDK_ROOT}/external/segger_rtt/SEGGER_RTT.c
+        ${SDK_ROOT}/external/segger_rtt/SEGGER_RTT_Syscalls_GCC.c
+        ${SDK_ROOT}/external/segger_rtt/SEGGER_RTT_printf.c
 #        ${SDK_ROOT}/modules/nrfx/drivers/src/nrfx_uart.c
 #        ${SDK_ROOT}/modules/nrfx/drivers/src/nrfx_uarte.c
         )
@@ -459,6 +470,8 @@ add_library(SDK_LIBS ${SDK_SRCS} ${TMR_SRCS} ${SD_SRCS} ${BLE_SRCS} ${FRTS_SRCS}
 target_include_directories(SDK_LIBS PUBLIC ${SDK_INCLUDES} ${FRTS_INCLUDES})
 
 target_link_libraries(SDK_LIBS PUBLIC sdk_config)
+
+target_link_libraries(SDK_LIBS PUBLIC ${SDK_ROOT}/external/zboss/lib/gcc/nrf52840/nrf_radio_driver.a)
 
 
 if(USE_CONNECTIVITY)

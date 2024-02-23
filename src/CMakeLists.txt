@@ -122,31 +122,34 @@ add_compile_options(-Wno-attributes -Wsign-compare -Wenum-compare -Wno-error=dep
 
 # Includes used by the SDK only
 include_directories(
-        /.
+        ./
         ./ws2812
 )
 
 # if a file is added in one of those dirs, the cmake... command must be re-run
-aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR} SRCS)
+#aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR} SRCS)
 aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/ws2812 SRCS)
 
-add_executable(${PROJECT_NAME} ${SRCS})
+add_executable(${PROJECT_NAME} main2.c ${SRCS}) #
 
-target_link_options(${PROJECT_NAME} PRIVATE -L${SDK_ROOT}/modules/nrfx/mdk)
+target_link_options(${PROJECT_NAME} PRIVATE -L${SDK_ROOT}/modules/nrfx/mdk -L${SDK_ROOT}/external/zboss/lib/gcc)
 if (USE_SOFTDEVICE)
     message(STATUS "Using softdevice for APP")
     target_link_options(${PROJECT_NAME} PRIVATE -T${CMAKE_CURRENT_SOURCE_DIR}/../pca10040/s132/app_s132.ld)
 else(USE_SOFTDEVICE)
     message(STATUS "No softdevice for APP")
     # PCA10056
-    target_link_options(${PROJECT_NAME} PRIVATE -T${CMAKE_CURRENT_SOURCE_DIR}/../pca10056/blank/armgcc/zigbee_light_bulb_gcc_nrf52.ld.ld)
+    target_link_options(${PROJECT_NAME} PRIVATE -T${CMAKE_CURRENT_SOURCE_DIR}/../pca10056/blank/armgcc/zigbee_light_bulb_gcc_nrf52.ld)
 endif(USE_SOFTDEVICE)
 target_link_options(${PROJECT_NAME} PRIVATE -Wl,--gc-sections)
 target_link_options(${PROJECT_NAME} PRIVATE --specs=nano.specs)
 target_link_options(${PROJECT_NAME} PRIVATE -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.map)
 
-target_link_libraries(${PROJECT_NAME} PUBLIC sdk_config)
+target_link_libraries(${PROJECT_NAME} PRIVATE sdk_config)
+target_link_libraries(${PROJECT_NAME} PRIVATE zboss gppb)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${SDK_ROOT}/external/zboss/lib/gcc/nrf52840/nrf_radio_driver.a)
 target_link_libraries(${PROJECT_NAME} PRIVATE -Wl,--whole-archive SDK_LIBS -Wl,--no-whole-archive)
+target_link_libraries(${PROJECT_NAME} PRIVATE zboss gppb)
 
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         BYPRODUCTS ${PROJECT_NAME}.elf ${PROJECT_NAME}.hex ${PROJECT_NAME}.bin
