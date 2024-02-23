@@ -184,6 +184,15 @@ APP_TIMER_DEF(m_ws2812_refresh_timer);
 static volatile bool m_ws2812_refresh_request;
 #endif
 
+/**@brief Function for error handling, which is called when an error has occurred.
+ *
+ * @param[in] error_code  Error code supplied to the handler. */
+void app_error_handler_bare(ret_code_t error_code) {
+
+    NRF_LOG_ERROR("Error %u (0x%X)", error_code, error_code);
+    NRF_LOG_FLUSH();
+}
+
 /**
  *
  * @param id
