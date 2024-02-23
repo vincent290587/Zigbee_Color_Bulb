@@ -123,7 +123,6 @@ add_compile_options(-Wno-attributes -Wsign-compare -Wenum-compare -Wno-error=dep
 # Includes used by the SDK only
 include_directories(
         ./
-        ./zconfig
         ./ws2812
 )
 
